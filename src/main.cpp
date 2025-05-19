@@ -130,7 +130,7 @@ void setup()
   lastLoopTimeMicros = micros();
   currentState = IDLE;
   delay(2000);
-  Serial.println("motor1,motor2,balanceInput,balanceOutput,pTerm,iTerm,dTerm");
+  Serial.println("balanceInput,balanceOutput,pTerm,iTerm,dTerm");
   currentState = BALANCING;
 }
 
@@ -180,7 +180,7 @@ void loop()
       if (imuReadErrors > 10)
       {
         currentState = FALLEN;
-        Serial.println("IMU Læsefejl! (For mange i træk)");
+        Serial.println("TAG_INFO: IMU Læsefejl! (For mange i træk)");
       }
       else
       {
@@ -199,7 +199,7 @@ void loop()
     if (abs(balanceInput) > MAX_TILT_ANGLE_SAFETY && currentState == BALANCING)
     {
       currentState = FALLEN;
-      Serial.printf("FEJL: For stor hældning -> Går til FALLEN state! ");
+      Serial.printf("TAG_FALLEN: FEJL: For stor hældning -> Går til FALLEN state! ");
       if (balanceInput > 0)
         Serial.printf("(+ forover)\n");
       else
@@ -209,7 +209,7 @@ void loop()
     {
       if (abs(balanceInput) < 3.0)
       { // Juster denne grænse efter behov
-        Serial.println("Robot oprejst igen -> Går til BALANCING state.");
+        Serial.println("TAG_INFO: Robot oprejst igen -> Går til BALANCING state.");
         currentState = BALANCING;
         speedCtrl1.stop();
         speedCtrl2.stop();
@@ -260,17 +260,12 @@ void loop()
     if (g_enable_csv_output)
     {
       // Kontinuerlig CSV output
-      Serial.print(balanceInput, 4);
-      Serial.print(",");
-      Serial.print(balanceOutput, 4);
-      Serial.print(",");
-      Serial.print(pTerm, 4);
-      Serial.print(",");
-      Serial.print(iTerm, 4);
-      Serial.print(",");
-      Serial.print(dTerm, 4);
-      Serial.println();
-      Serial.printf("\n");
+      Serial.printf("TAG_CSV: %.4f,", nowMicros / 1000.0); // Tid i ms
+      Serial.printf("%.4f,", balanceInput);
+      Serial.printf("%.4f,", balanceOutput);
+      Serial.printf("%.4f,", pTerm);
+      Serial.printf("%.4f,", iTerm);
+      Serial.printf("%.4f\n", dTerm);
     }
 
   } // End timed loop

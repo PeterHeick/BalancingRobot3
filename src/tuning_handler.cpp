@@ -89,7 +89,7 @@ void saveTuningParameters()
   preferences.putDouble(KEY_GAIN, g_power_gain);
 
   preferences.end(); // VIGTIGT: Luk for at sikre data skrives til flash!
-  Serial.println("Tuning parameters saved to NVS.");
+  Serial.println("TAG_INFO: Tuning parameters saved to NVS.");
 }
 
 void applyTuningsToPID(PID &pidController)
@@ -99,7 +99,7 @@ void applyTuningsToPID(PID &pidController)
 
 void printCurrentTunings()
 {
-  Serial.printf("KP: %.4f, KI: %.4f, KD: %.4f, Pow: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
+  Serial.printf("TAG_INFO: KP: %.4f, KI: %.4f, KD: %.4f, Pow: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
                 g_balance_kp, g_balance_ki, g_balance_kd, g_power_gain, g_init_balance, g_balance_output_to_rpm_scale,
                 g_enable_csv_output ? "ON" : "OFF");
 }
@@ -183,18 +183,18 @@ void processBufferedCommand(PID &pidController)
   }
   else if (input.equalsIgnoreCase("help"))
   {
-    Serial.println("Available commands (case-insensitive for command part):");
-    Serial.println("  kp=<value>    (e.g., kp=2.5)");
-    Serial.println("  ki=<value>    (e.g., ki=0.01)");
-    Serial.println("  kd=<value>    (e.g., kd=0.15)");
-    Serial.println("  gain=<value>   (e.g., gain=0.01)");
-    Serial.println("  init=<value>  (e.g., init=0.5)");
-    Serial.println("  scale=<value> (e.g., scale=1.2)");
-    Serial.println("  save          (saves current tunings to NVS)");
-    Serial.println("  print         (prints current tunings)");
-    Serial.println("  csv_on        (enables CSV data output)");
-    Serial.println("  csv_off       (disables CSV data output)");
-    Serial.println("  help          (shows this help message)");
+    Serial.println("TAG_INFO: Available commands (case-insensitive for command part):");
+    Serial.println("TAG_INFO:   kp=<value>    (e.g., kp=2.5)");
+    Serial.println("TAG_INFO:   ki=<value>    (e.g., ki=0.01)");
+    Serial.println("TAG_INFO:   kd=<value>    (e.g., kd=0.15)");
+    Serial.println("TAG_INFO:   gain=<value>   (e.g., gain=0.01)");
+    Serial.println("TAG_INFO:   init=<value>  (e.g., init=0.5)");
+    Serial.println("TAG_INFO:   scale=<value> (e.g., scale=1.2)");
+    Serial.println("TAG_INFO:   save          (saves current tunings to NVS)");
+    Serial.println("TAG_INFO:   print         (prints current tunings)");
+    Serial.println("TAG_INFO:   csv_on        (enables CSV data output)");
+    Serial.println("TAG_INFO:   csv_off       (disables CSV data output)");
+    Serial.println("TAG_INFO:   help          (shows this help message)");
   }
   else
   {
@@ -260,7 +260,7 @@ void processBufferedCommand(PID &pidController)
     }
     else if (input.length() > 0)
     { // Hvis der var input, men ikke en gyldig kommando=værdi
-      Serial.print("Invalid command or format: '");
+      Serial.print("TAG_INFO: Invalid command or format: '");
       Serial.print(input);
       Serial.println("'. Type 'help'.");
     }

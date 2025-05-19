@@ -100,7 +100,6 @@ void SpeedController::update(int fortegn) {
 
     // 7. Begræns endelig PWM og send til motor
     finalPwm = constrain(finalPwm, 0, 255);
-    Serial.printf("%.4f,", finalPwm * fortegn);
     _lastAppliedPwm = (int)finalPwm;
     _motor.applyRawPwm(_lastAppliedPwm);
 }
