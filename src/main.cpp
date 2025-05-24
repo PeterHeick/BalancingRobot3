@@ -19,8 +19,13 @@ Motor motor1(MOTOR1_IN1, MOTOR1_IN2, MOTOR1_ENA, MOTOR1_HALL_A, PWM_CHANNEL1, MO
 Motor motor2(MOTOR2_IN3, MOTOR2_IN4, MOTOR2_ENB, MOTOR2_HALL_A, PWM_CHANNEL2, MOTOR_MIN_MEASURE_TIME_MS);
 
 // Opret SpeedController objekter med reference til motor og hardkodet tabel
+SpeedController speedCtrl1(motor1);
+SpeedController speedCtrl2(motor2);
+
+/* FeedForward og PID version
 SpeedController speedCtrl1(motor1, RPM_TO_PWM_MOTOR_1, SPEED_KP, SPEED_KI, SPEED_KD);
 SpeedController speedCtrl2(motor2, RPM_TO_PWM_MOTOR_2, SPEED_KP, SPEED_KI, SPEED_KD);
+*/
 
 BNO085 bno085;
 sh2_SensorValue_t sensorValue;

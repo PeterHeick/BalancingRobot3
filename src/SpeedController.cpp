@@ -2,129 +2,94 @@
 #include <Arduino.h> // For constrain, abs, osv.
 #include "config.h"  // For diverse konstanter
 
-// --- Konstruktør ---
-SpeedController::SpeedController(Motor &motor, const int* lookupTable, double Kp, double Ki, double Kd) :
+// --- Konstruktør (SIMPLIFICERET) ---
+SpeedController::SpeedController(Motor &motor) :
     _motor(motor), // Gem reference til motor
-    // Opret PID objekt. Input/Output/Setpoint peger på klassens medlemmer.
-    // Retning (DIRECT) og SampleTime sættes i begin().
-    _speedPID(&_pidInput, &_pidOutput, &_pidSetpoint, Kp, Ki, Kd, DIRECT),
-    _pidInput(0.0),
-    _pidOutput(0.0),
-    _pidSetpoint(0.0),
-    _rpmToPwmTable(lookupTable), // Gem pointer til den hardkodede tabel
-    _kp(Kp),
-    _ki(Ki),
-    _kd(Kd),
-    _previousFilteredRpm(0.0),
-    _filterInitialized(false),
     _lastAppliedPwm(0)
 {
-    // Tjek om lookupTable er gyldig?
-    if (_rpmToPwmTable == nullptr) {
-        Serial.println("FEJL: SpeedController modtog nullptr til lookupTable!");
-        // Evt. håndter fejl her - stop programmet?
-    }
+    // Ingen PID eller feedforward tables længere!
 }
 
-// --- Initialisering ---
+// --- Initialisering (SIMPLIFICERET) ---
 void SpeedController::begin() {
-    // Sæt PID sample time til det samme som hoved-loopet
-    _speedPID.SetSampleTime(LOOP_TIME_MS);
-
-    // Sæt PID output limits til korrektions-området
-    // Disse konstanter skal defineres i config.h!
-    _speedPID.SetOutputLimits(SPEED_PID_CORRECTION_MIN, SPEED_PID_CORRECTION_MAX);
-
-    // Start PID'en
-    _speedPID.SetMode(AUTOMATIC);
-    _pidInput = _motor.getActualRpm(); // Læs start RPM
-    _previousFilteredRpm = _pidInput;  // Initialiser filter
-    _filterInitialized = true;
+    // Ingen PID initialisering - kun motor setup hvis nødvendig
+    _lastAppliedPwm = 0;
+    _motor.applyRawPwm(0); // Start med stop
 }
 
-// --- Sæt Mål RPM ---
+// --- Sæt Direkte PWM Baseret på Target RPM (NY TILGANG) ---
 void SpeedController::setTargetRpm(double targetRpm) {
-    // Sæt motorens retning baseret på fortegnet
-    _motor.setDirection(targetRpm >= 0);
-
-    // Sæt PID setpoint til den absolutte værdi
-    _pidSetpoint = abs(targetRpm);
-
-    // Begræns setpoint til tabelstørrelsen (selvom opslag også begrænser)
-    if (_pidSetpoint > MAX_RPM) {
-        _pidSetpoint = MAX_RPM;
+    // Konverter RPM direkte til PWM uden feedforward eller PID
+    
+    // Håndter retning
+    bool forward = targetRpm >= 0;
+    _motor.setDirection(forward);
+    
+    // Konverter RPM til PWM med simpel skalering
+    double absRpm = abs(targetRpm);
+    
+    // Deadzone - under denne RPM sender vi 0 PWM
+    if (absRpm < DEADZONE_RPM_THRESHOLD) {
+        _lastAppliedPwm = 0;
+        _motor.applyRawPwm(0);
+        return;
     }
+    
+    // Simpel lineær skalering: RPM -> PWM
+    // Du skal justere disse konstanter baseret på dine motore
+    // Eksempel: 0-100 RPM maps til 50-255 PWM (minimum PWM at starte)
+    
+    int pwm;
+    if (absRpm <= MIN_EFFECTIVE_RPM) {
+        // Under minimum RPM - brug minimum PWM
+        pwm = MIN_MOTOR_PWM;
+    } else if (absRpm >= MAX_RPM) {
+        // Over maximum RPM - brug maximum PWM  
+        pwm = 255;
+    } else {
+        // Lineær interpolation mellem MIN og MAX
+        // pwm = MIN_PWM + (RPM - MIN_RPM) * (MAX_PWM - MIN_PWM) / (MAX_RPM - MIN_RPM)
+        pwm = MIN_MOTOR_PWM + 
+              (absRpm - MIN_EFFECTIVE_RPM) * (255 - MIN_MOTOR_PWM) / 
+              (MAX_RPM - MIN_EFFECTIVE_RPM);
+    }
+    
+    // Begræns PWM
+    pwm = constrain(pwm, 0, 255);
+    
+    // Send til motor
+    _lastAppliedPwm = pwm;
+    _motor.applyRawPwm(pwm);
 }
 
-// --- Opdater Kontrol Loop ---
+// --- Update er nu meget simpel ---
 void SpeedController::update(int fortegn) {
-    // 1. Læs rå RPM fra motor
-    double rawRpmInput = _motor.getActualRpm();
-
-    // 2. Anvend lavpasfilter (valgfrit men anbefalet)
-    if (!_filterInitialized) { // Initialiser filter ved første kørsel
-         _previousFilteredRpm = rawRpmInput;
-         _filterInitialized = true;
-    }
-    // RPM_FILTER_ALPHA skal defineres i config.h
-    _pidInput = LOWPASSFILTER(rawRpmInput, _previousFilteredRpm, RPM_FILTER_ALPHA);
-    _previousFilteredRpm = _pidInput; // Gem til næste iteration
-
-    // 3. Håndter situationen hvis målet er under dødzone-grænsen
-    //    DEADZONE_RPM_THRESHOLD skal defineres i config.h (f.eks. 5 eller 10)
-    if (_pidSetpoint < DEADZONE_RPM_THRESHOLD) {
-        _speedPID.SetMode(MANUAL); // Slå PID fra for at undgå integral windup
-        _pidOutput = 0;          // Ingen korrektion
-        _lastAppliedPwm = 0;     // Send 0 PWM
-        _motor.applyRawPwm(0);
-        return; // Afslut update her
-    }
-
-    // Hvis vi er over dødzone, sørg for PID er tændt
-    if (_speedPID.GetMode() == MANUAL) {
-        _speedPID.SetMode(AUTOMATIC);
-    }
-
-    // 4. Feed-Forward: Slå base PWM op i den hardkodede tabel
-    //    Konverter setpoint (dobbelt) til et heltal index
-    int rpmIndex = constrain((int)round(_pidSetpoint), 0, MAX_RPM);
-    // Hent PWM fra tabellen (som blev givet i konstruktøren)
-    int basePwm = (_rpmToPwmTable != nullptr) ? _rpmToPwmTable[rpmIndex] : 0;
-
-    // 5. Kør PID for at få korrektion (+/-)
-    //    Input (_pidInput) og Setpoint (_pidSetpoint) er sat
-    _speedPID.Compute(); // Resultat ligger i _pidOutput
-
-    // 6. Kombiner Feed-Forward og PID korrektion
-    double finalPwm = (double)basePwm + _pidOutput;
-
-    // 7. Begræns endelig PWM og send til motor
-    finalPwm = constrain(finalPwm, 0, 255);
-    _lastAppliedPwm = (int)finalPwm;
-    _motor.applyRawPwm(_lastAppliedPwm);
+    // Ingen update nødvendig - alt sker i setTargetRpm
+    // Denne metode kan være tom eller fjernes helt
+    
+    // Optionelt: Du kan læse actual RPM for debugging
+    // double actualRpm = _motor.getActualRpm();
+    // Serial.print("Target PWM: "); Serial.print(_lastAppliedPwm);
+    // Serial.print(", Actual RPM: "); Serial.println(actualRpm);
 }
 
 // --- Stop ---
 void SpeedController::stop() {
     _motor.applyRawPwm(0);
     _lastAppliedPwm = 0;
-    // Skal PID resettes? Sæt evt. mode til MANUAL
-    // _speedPID.SetMode(MANUAL);
 }
 
-// --- Getters (Eksempler) ---
+// --- Getters ---
 double SpeedController::getActualRpm() const {
-    return _pidInput; // Returner den (filtrerede) værdi PID'en bruger
+    return _motor.getActualRpm(); // Direkte fra motor
 }
 
 int SpeedController::getLastPwm() const {
     return _lastAppliedPwm;
 }
 
-// --- Set Tunings ---
+// --- Set Tunings (ikke længere nødvendig) ---
 void SpeedController::setTunings(double Kp, double Ki, double Kd) {
-    _kp = Kp;
-    _ki = Ki;
-    _kd = Kd;
-    _speedPID.SetTunings(_kp, _ki, _kd);
+    // Ingen PID længere - denne metode gør intet
+    // Kan fjernes fra header fil også
 }

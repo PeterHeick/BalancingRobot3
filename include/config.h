@@ -23,6 +23,9 @@ extern double g_power_gain;
 #define SPEED_PID_CORRECTION_MIN -50
 #define SPEED_PID_CORRECTION_MAX 50
 
+#define MIN_MOTOR_PWM 20        
+#define MIN_EFFECTIVE_RPM 10    
+
 #define DIRECTION_MAX_LENGTH 10
 
 // Lowpass filter definition
