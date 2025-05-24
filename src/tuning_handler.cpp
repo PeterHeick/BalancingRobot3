@@ -99,7 +99,7 @@ void applyTuningsToPID(PID &pidController)
 
 void printCurrentTunings()
 {
-  Serial.printf("TAG_INFO: KP: %.4f, KI: %.4f, KD: %.4f, Pow: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
+  Serial.printf("TAG_INFO: KP: %.4f, KI: %.4f, KD: %.4f, Gain: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
                 g_balance_kp, g_balance_ki, g_balance_kd, g_power_gain, g_init_balance, g_balance_output_to_rpm_scale,
                 g_enable_csv_output ? "ON" : "OFF");
 }
@@ -155,7 +155,7 @@ void processBufferedCommand(PID &pidController)
   input.trim();
 
   // Debug print for at se hvad der processeres
-  Serial.print("DBG PROC: Processing '"); Serial.print(input); Serial.println("'");
+  // Serial.print("DBG PROC: Processing '"); Serial.print(input); Serial.println("'");
 
   if (input.equalsIgnoreCase("save"))
   {
@@ -224,15 +224,14 @@ void processBufferedCommand(PID &pidController)
         g_balance_kd = value;
         pid_params_changed = true;
       }
-      else if (command.equals("pow") || command.equals("gain"))
+      else if (command.equals("gain"))
       {
         g_power_gain = value;
-        pid_params_changed = true;
       }
       else if (command.equals("init"))
       {
         g_init_balance = value;
-        Serial.printf("INITBALANCE set to: %.4f\n", g_init_balance);
+        // Serial.printf("INITBALANCE set to: %.4f\n", g_init_balance);
       }
       else if (command.equals("scale"))
       {
@@ -249,11 +248,11 @@ void processBufferedCommand(PID &pidController)
       if (pid_params_changed)
       {
         applyTuningsToPID(pidController);
-        Serial.printf("Updated PID param %s to: %.4f\n", command.c_str(), value);
+        Serial.printf("TAG_INFO: Updated PID param %s to: %.4f\n", command.c_str(), value);
       }
 
       // Print altid nuværende tunings efter en gyldig parameterændring eller 'init'/'scale'
-      if (pid_params_changed || command.equals("init") || command.equals("scale"))
+      if (pid_params_changed || command.equals("init") || command.equals("scale") || command.equals("gain"))
       {
         printCurrentTunings();
       }

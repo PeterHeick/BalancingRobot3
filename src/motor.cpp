@@ -77,7 +77,6 @@ void Motor::stop()
 void Motor::applyRawPwm(int pwm)
 {
   // Serial.printf("[Motor %p] pwmChannel: %d, applyRawPwm: %d\n", this, _pwmChannel, pwm);
-  Serial.printf("[Motor %p] applyRawPwm: %d\n", this, pwm);
   pwm = constrain(pwm, 0, _pwmMax); // Sørg for at PWM er indenfor gyldigt område
   ledcWrite(_pwmChannel, pwm);      // Send PWM signalet
 }
