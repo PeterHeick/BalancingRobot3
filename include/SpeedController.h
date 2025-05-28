@@ -2,6 +2,7 @@
 #define SPEEDCONTROLLER_H
 
 #include "Motor.h" // Antag at du har en Motor klasse
+#include "config.h" // For konstanter som MAX_RPM, MIN_MOTOR_PWM etc. <-- Tilføjet for klarhed
 
 class SpeedController {
 public:
@@ -14,8 +15,8 @@ public:
     // Sæt target RPM (konverteres direkte til PWM)
     void setTargetRpm(double targetRpm);
 
-    // Update (nu meget simpel eller tom)
-    void update(int fortegn = 1);
+    // Update (nu meget simpel eller tom) - FJERNES
+    // void update(int fortegn = 1);
 
     // Stop motor
     void stop();
@@ -24,8 +25,8 @@ public:
     double getActualRpm() const;
     int getLastPwm() const;
 
-    // Set tunings (ikke længere relevant)
-    void setTunings(double Kp, double Ki, double Kd);
+    // Set tunings (ikke længere relevant) - FJERNES
+    // void setTunings(double Kp, double Ki, double Kd);
 
 private:
     Motor &_motor;              // Reference til motor objekt
