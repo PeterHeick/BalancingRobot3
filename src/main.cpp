@@ -38,6 +38,15 @@ sh2_SensorValue_t sensorValue; // Til at læse BNO085 rapporter
 // De er kun deklareret som 'extern' i config.h for at være globale.
 // Deres værdier initialiseres i initializeTuningParameters().
 
+// ---- Globale Tuning Variable (Definitioner) ----
+double g_balance_kp = 12.0;
+double g_balance_ki = 1.0;
+double g_balance_kd = 0.54;
+double g_velocity_kp = 0.01;
+double g_init_balance = 0.8000;
+double g_balance_output_to_rpm_scale = 1.0;
+double g_power_gain = 0.0;
+
 // Variabler til at holde de seneste sensorværdier
 double fusedPitch = 0.0;        // Fused Pitch vinkel fra BNO085 (grader)
 double fusedPitchRate = 0.0;    // Fused Pitch vinkelhastighed fra BNO085 (grader/sek)
@@ -311,6 +320,10 @@ void loop()
     double actualRpmLeft = speedCtrl1.getActualRpm();
     double actualRpmRight = speedCtrl2.getActualRpm();
     double horizontalVelocity = (actualRpmLeft + actualRpmRight) / 2.0; // Gennemsnit RPM
+    double targetVelocity = 0.0;                                        // Hold position
+    double velocityError = targetVelocity - horizontalVelocity;
+    // Velocity P-term
+    double velocityCorrection = velocityError * g_velocity_kp;
 
     // --- Manuel PID Beregning ---
     // P Term
@@ -341,7 +354,8 @@ void loop()
     dTerm_log = g_balance_kd * fusedPitchRate;
 
     // Samlet RÅ PID output (før scaling og power gain)
-    balanceCmd = pTerm_log + iTerm_log + dTerm_log;
+    double balance = pTerm_log + iTerm_log + dTerm_log;
+    double balanceCmd = balance + velocityCorrection;
 
     // Konstrain det rå PID output
     balanceCmd = constrain(balanceCmd, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);

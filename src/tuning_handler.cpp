@@ -5,14 +5,6 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-// ---- Globale Tuning Variable (Definitioner) ----
-double g_balance_kp = 3.3;
-double g_balance_ki = 0.0;
-double g_balance_kd = 0.20;
-double g_init_balance = 0.8000;
-double g_balance_output_to_rpm_scale = 1.0;
-double g_power_gain = 0.0;
-
 bool g_enable_csv_output = false;
 
 Preferences preferences;
