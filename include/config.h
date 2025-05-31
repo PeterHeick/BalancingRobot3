@@ -36,9 +36,21 @@ extern double g_init_balance; // Mål-vinkel for balance (typisk tæt på 0, men
 extern double g_balance_output_to_rpm_scale; // Skaleringsfaktor fra PID output til RPM kommando
 extern double g_power_gain; // Multiplier for at øge motorkraften ved større hældning
 
+// Position PID konstanter
+extern double g_position_kp;
+extern double g_position_ki;
+extern double g_position_kd;
+extern double g_position_output_to_pitch_scale; // Skaleringsfaktor fra position output til pitch offset
+extern double g_velocity_kp;
+
 // Begrænsning for I-term anti-windup og/eller PID output generelt
 // Dette er en grænse i 'raw_pid_output' skalaen, før scaling/gain
 #define BALANCE_PID_OUTPUT_LIMIT 100.0 // Eksempelværdi, juster efter behov
+
+// Position PID begrænsninger
+#define POSITION_PID_OUTPUT_LIMIT 5.0 // Maksimalt pitch offset i grader
+#define POSITION_INTEGRAL_LIMIT 2.0 // Begrænsning for integral term
+#define POSITION_ANTI_WINDUP_THRESHOLD 0.1 // Meter, tærskel for I-term akkumulering
 
 // --- IMU Indstillinger (BNO085) ---
 // Raport interval i mikrosekunder. SH2 anbefaler 5ms (5000us) for Rotation Vector.
@@ -49,5 +61,6 @@ extern double g_power_gain; // Multiplier for at øge motorkraften ved større h
 
 // Tuning handler: Deklarer g_enable_csv_output som extern, hvis den defineres i .cpp
 extern bool g_enable_csv_output; // <-- SIKRE DEN ER DEFINERET
+extern bool g_position_reset_requested;
 
 #endif // CONFIG_H

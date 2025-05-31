@@ -16,7 +16,6 @@ private:
     int _pinENA;
     int _hallPinA;
     int _pwmChannel;
-    int _pwmMax = 244;
     int _minMeasurementTimeMs; // Fra konstruktør
 
     volatile unsigned long _pulseCount;
@@ -24,20 +23,20 @@ private:
     unsigned long _lastRpmUpdateTime = 0;
     unsigned long _startMeasurementTime = 0;
     bool _currentDirectionForward = false;
-    int _lastValidRpm;
 
-    void updateRPM(); // Privat hjælpefunktion
 
 public:
     Motor(int pinIN1, int pinIN2, int pinENA, int hallPinA, int pwmChannel, int minMeasurementTimeMs = MOTOR_MIN_MEASUREMENT_TIME_MS); // Brug konstant fra config.h
 
     void begin();
+    void updateRPM();
     void setDirection(bool forward);
     void stop();
     void applyRawPwm(int pwm);
     int getActualRpm();
     void IRAM_ATTR incrementPulseCount();
     void resetPulseCount();
+    volatile unsigned long getTotalPulseCount() const { return _pulseCount; }
 };
 
 #endif // MOTOR_H

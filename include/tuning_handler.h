@@ -5,15 +5,15 @@
 // #include <PID_v1.h> // <--- FJERNES
 
 // Deklarerer de globale tuning variabler. De defineres i tuning_handler.cpp.
-extern double g_balance_kp;
-extern double g_balance_ki;
-extern double g_balance_kd;
-extern double g_init_balance;
-extern double g_balance_output_to_rpm_scale;
-extern double g_power_gain;
+// extern double g_balance_kp;
+// extern double g_balance_ki;
+// extern double g_balance_kd;
+// extern double g_init_balance;
+// extern double g_balance_output_to_rpm_scale;
+// extern double g_power_gain;
 
 // Deklarer den globale variabel til CSV output, defineret i tuning_handler.cpp
-extern bool g_enable_csv_output;
+// extern bool g_enable_csv_output;
 
 // Funktioner til håndtering af tuning
 void initializeTuningParameters(); // Læser fra NVS eller sætter defaults

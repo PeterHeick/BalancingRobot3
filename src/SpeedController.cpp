@@ -2,21 +2,6 @@
 #include <Arduino.h> // For constrain, abs, osv. (stadig nødvendig her)
 #include "config.h"  // For diverse konstanter
 
-// FJERN DISSE LINJER - De hører til BNO085 initialisering, ikke SpeedController
-/*
-#ifdef FAST_MODE
-// Top frequency is reported to be 1000Hz (but freq is somewhat variable)
-sh2_SensorId_t reportType = SH2_GYRO_INTEGRATED_RV;
-long reportIntervalUs = 2000;
-#else
-// Top frequency is about 250Hz but this report is more accurate
-sh2_SensorId_t reportType = SH2_ARVR_STABILIZED_RV;
-long reportIntervalUs = 5000;
-#endif
-
-bool bno085Initialized = false; // <-- FJERN
-*/
-
 // --- Konstruktør ---
 SpeedController::SpeedController(Motor &motor) :
     _motor(motor), // Gem reference til motor
@@ -68,7 +53,7 @@ void SpeedController::setTargetRpm(double targetRpm) {
         // Map absRpm fra [MIN_EFFECTIVE_RPM, MAX_RPM] til [MIN_MOTOR_PWM, 255]
         // Værdi = StartOutput + (Input - StartInput) * (EndOutput - StartOutput) / (EndInput - StartInput)
         pwm = MIN_MOTOR_PWM +
-              (absRpm - MIN_EFFECTIVE_RPM) * (255.0 - MIN_MOTOR_PWM) /
+              (absRpm - MIN_EFFECTIVE_RPM) * (PWM_MAX_DUTY - MIN_MOTOR_PWM) /
               (MAX_RPM - MIN_EFFECTIVE_RPM); // Bruger konstanter fra config.h
     }
 
@@ -95,11 +80,3 @@ double SpeedController::getActualRpm() const {
 int SpeedController::getLastPwm() const {
     return _lastAppliedPwm;
 }
-
-// --- Set Tunings (ikke længere nødvendig) ---
-// Denne metode gør intet og kan fjernes helt.
-/*
-void SpeedController::setTunings(double Kp, double Ki, double Kd) {
-    // Ingen PID længere - denne metode gør intet
-}
-*/

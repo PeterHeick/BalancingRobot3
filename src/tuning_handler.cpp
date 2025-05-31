@@ -6,6 +6,21 @@
 #include <stdint.h>
 
 bool g_enable_csv_output = false;
+bool g_position_reset_requested = false;
+// ---- Globale Tuning Variable (Definitioner) ----
+double g_balance_kp = 12.0;
+double g_balance_ki = 1.0;
+double g_balance_kd = 0.54;
+double g_velocity_kp = 0.01;
+double g_init_balance = 0.8000;
+double g_balance_output_to_rpm_scale = 1.0;
+double g_power_gain = 0.0;
+
+// Position PID variable
+double g_position_kp = 1.0;
+double g_position_ki = 0.0;
+double g_position_kd = 0.1;
+double g_position_output_to_pitch_scale = 1.0;
 
 Preferences preferences;
 
@@ -16,6 +31,12 @@ const char *KEY_KD = "bal_kd";
 const char *KEY_INIT_BAL = "init_bal";
 const char *KEY_SCALE = "bal_scale";
 const char *KEY_GAIN = "bal_gain";
+
+// Position PID keys
+const char *KEY_POS_KP = "pos_kp";
+const char *KEY_POS_KI = "pos_ki";
+const char *KEY_POS_KD = "pos_kd";
+const char *KEY_POS_SCALE = "pos_scale";
 
 // --- Buffer til seriel input ---
 #define SERIAL_BUFFER_SIZE 64
@@ -42,6 +63,12 @@ void initializeTuningParameters()
     g_init_balance = preferences.getDouble(KEY_INIT_BAL, g_init_balance);
     g_balance_output_to_rpm_scale = preferences.getDouble(KEY_SCALE, g_balance_output_to_rpm_scale);
     g_power_gain = preferences.getDouble(KEY_GAIN, g_power_gain);
+    
+    // Load position PID parameters
+    g_position_kp = preferences.getDouble(KEY_POS_KP, g_position_kp);
+    g_position_ki = preferences.getDouble(KEY_POS_KI, g_position_ki);
+    g_position_kd = preferences.getDouble(KEY_POS_KD, g_position_kd);
+    g_position_output_to_pitch_scale = preferences.getDouble(KEY_POS_SCALE, g_position_output_to_pitch_scale);
 
     preferences.end();
     Serial.println("Loaded tuning parameters from NVS (or defaults).");
@@ -64,6 +91,12 @@ void saveTuningParameters()
   preferences.putDouble(KEY_INIT_BAL, g_init_balance);
   preferences.putDouble(KEY_SCALE, g_balance_output_to_rpm_scale);
   preferences.putDouble(KEY_GAIN, g_power_gain);
+  
+  // Save position PID parameters
+  preferences.putDouble(KEY_POS_KP, g_position_kp);
+  preferences.putDouble(KEY_POS_KI, g_position_ki);
+  preferences.putDouble(KEY_POS_KD, g_position_kd);
+  preferences.putDouble(KEY_POS_SCALE, g_position_output_to_pitch_scale);
 
   preferences.end();
   Serial.println("TAG_INFO: Tuning parameters saved to NVS.");
@@ -159,6 +192,11 @@ void processBufferedCommand(double currentPitch)
     Serial.printf("TAG_INFO: Initial balance angle set to current pitch: %.4f\n", g_init_balance);
     // Do NOT print tunings here automatically, Python sends print after.
    }
+   else if (input.equalsIgnoreCase("pos_reset")) {
+    // Reset position controller to zero
+    g_position_reset_requested = true;
+    Serial.println("TAG_INFO: Position reset to zero.");
+   }
   else if (input.equalsIgnoreCase("help"))
   {
     Serial.println("TAG_INFO: Available commands (case-insensitive for command part):");
@@ -169,6 +207,11 @@ void processBufferedCommand(double currentPitch)
     Serial.println("TAG_INFO:   init=<value>");
     Serial.println("TAG_INFO:   init_now");
     Serial.println("TAG_INFO:   scale=<value>");
+    Serial.println("TAG_INFO:   pos_kp=<value>");
+    Serial.println("TAG_INFO:   pos_ki=<value>");
+    Serial.println("TAG_INFO:   pos_kd=<value>");
+    Serial.println("TAG_INFO:   pos_scale=<value>");
+    Serial.println("TAG_INFO:   pos_reset");
     Serial.println("TAG_INFO:   save");
     Serial.println("TAG_INFO:   load"); // Added load command help
     Serial.println("TAG_INFO:   print");
@@ -210,6 +253,22 @@ void processBufferedCommand(double currentPitch)
       else if (command.equals("scale"))
       {
         g_balance_output_to_rpm_scale = value;
+      }
+      else if (command.equals("pos_kp"))
+      {
+        g_position_kp = value;
+      }
+      else if (command.equals("pos_ki"))
+      {
+        g_position_ki = value;
+      }
+      else if (command.equals("pos_kd"))
+      {
+        g_position_kd = value;
+      }
+      else if (command.equals("pos_scale"))
+      {
+        g_position_output_to_pitch_scale = value;
       }
       else
       {

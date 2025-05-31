@@ -10,7 +10,6 @@ Motor::Motor(int pinIN1, int pinIN2, int pinENA, int hallPinA, int pwmChannel, i
                                                                                                            _pinENA(pinENA),
                                                                                                            _hallPinA(hallPinA),
                                                                                                            _pwmChannel(pwmChannel),
-                                                                                                           _pwmMax(255), // Antager 8-bit opløsning defineret i config.h/ESP32.h
                                                                                                            _minMeasurementTimeMs(minMeasurementTimeMs),
                                                                                                            _pulseCount(0),
                                                                                                            _actualRpm(0),
@@ -77,26 +76,33 @@ void Motor::stop()
 void Motor::applyRawPwm(int pwm)
 {
   // Serial.printf("[Motor %p] pwmChannel: %d, applyRawPwm: %d\n", this, _pwmChannel, pwm);
-  pwm = constrain(pwm, 0, _pwmMax); // Sørg for at PWM er indenfor gyldigt område
+  pwm = constrain(pwm, 0, PWM_MAX_DUTY); // Sørg for at PWM er indenfor gyldigt område
   ledcWrite(_pwmChannel, pwm);      // Send PWM signalet
 }
 
 // --- Måling ---
 int Motor::getActualRpm()
 {
-  updateRPM();
+  // updateRPM(); // Du behøver ikke kalde updateRPM her. Den kaldes f.eks. fra main loop eller en timer.
+                 // Lad os antage main loop kalder den eller den sker i baggrunden.
+                 // EN MERE ROBUST LØSNING VIL VÆRE AT KALDE updateRPM() PERIODISK FRA MAIN LOOP ELLER EN TIMER.
+                 // MEN MED AKTUEL LOGIK I updateRPM, DER KUN GØR NOGET HVIS TIDEN ER GÅET,
+                 // ER DET OKAY AT KALDE DEN OFTE. LAD OS BEHOLDE KALDET HER FOR NU.
+  // updateRPM(); // Beholder kaldet, men forstå logikken.
 
   // Returner 0 hvis der ikke har været en valid måling i et stykke tid
   // (f.eks. hvis motoren står stille og ingen pulser tælles)
   if (millis() - _lastRpmUpdateTime > RPM_TIMEOUT_MS)
   {
-    // _actualRpm = 0;
-    // return 0;
-    return _lastValidRpm;
+    // Motor har ikke sendt pulser i lang tid, antag den står stille.
+    _actualRpm = 0; // Sæt den interne værdi til 0
+    // Serial.printf("Motor timeout %p, setting RPM to 0\n", this); // Debug timeout
+    return 0; // Returner 0
+    // FJERN _lastValidRpm logikken helt
+    // return _lastValidRpm; // <--- FJERN DENNE LINJE
   }
   return _actualRpm;
 }
-
 // --- Interne Funktioner / ISR Hjælpere ---
 
 // Denne funktion kaldes fra den globale ISR knyttet til _hallPinA
