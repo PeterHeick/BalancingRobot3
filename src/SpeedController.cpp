@@ -68,13 +68,13 @@ void SpeedController::setTargetRpm(double targetRpm) {
         // Map absRpm fra [MIN_EFFECTIVE_RPM, MAX_RPM] til [MIN_MOTOR_PWM, 255]
         // Værdi = StartOutput + (Input - StartInput) * (EndOutput - StartOutput) / (EndInput - StartInput)
         pwm = MIN_MOTOR_PWM +
-              (absRpm - MIN_EFFECTIVE_RPM) * (255.0 - MIN_MOTOR_PWM) /
+              (absRpm - MIN_EFFECTIVE_RPM) * (PWM_MAX_DUTY - MIN_MOTOR_PWM) /
               (MAX_RPM - MIN_EFFECTIVE_RPM); // Bruger konstanter fra config.h
     }
 
     // Begræns PWM til gyldigt område (0 til 255 for 8-bit)
     // constrain(val, low, high)
-    pwm = constrain(pwm, 0, 255); // Eller constrain(pwm, 0, PWM_MAX_DUTY); hvis defineret i config.h
+    pwm = constrain(pwm, 0, PWM_MAX_DUTY); // Eller constrain(pwm, 0, PWM_MAX_DUTY); hvis defineret i config.h
 
     // Send til motor
     _lastAppliedPwm = pwm;
@@ -88,7 +88,7 @@ void SpeedController::stop() {
 }
 
 // --- Getters ---
-double SpeedController::getActualRpm() const {
+double SpeedController::getActualRpm() {
     return _motor.getActualRpm(); // Direkte fra motor
 }
 

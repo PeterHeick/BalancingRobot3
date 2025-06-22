@@ -22,7 +22,7 @@ public:
     void stop();
 
     // Getters
-    double getActualRpm() const;
+    double getActualRpm();
     int getLastPwm() const;
 
     // Set tunings (ikke længere relevant) - FJERNES

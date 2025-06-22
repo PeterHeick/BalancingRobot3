@@ -9,8 +9,10 @@ extern double g_balance_kp;
 extern double g_balance_ki;
 extern double g_balance_kd;
 extern double g_init_balance;
+extern double g_balance_calib_ki;
 extern double g_balance_output_to_rpm_scale;
 extern double g_power_gain;
+extern double netDisplacement_m;
 
 // Deklarer den globale variabel til CSV output, defineret i tuning_handler.cpp
 extern bool g_enable_csv_output;
@@ -22,10 +24,6 @@ void printCurrentTunings();        // Printer nuværende værdier
 
 // Funktion til at håndtere seriel input og parse kommandoer.
 // Modtager nu aktuel pitch for 'init_now' kommandoen.
-void handleSerialTuning(double currentPitch); // <-- RETTET SIGANTUR
-
-// Intern funktion (prototypen kan fjernes hvis den kun bruges i .cpp, men ok at have)
-// Modtager nu aktuel pitch
-void processBufferedCommand(double currentPitch); // <-- RETTET SIGANTUR
+void handleSerialTuning();
 
 #endif // TUNING_HANDLER_H

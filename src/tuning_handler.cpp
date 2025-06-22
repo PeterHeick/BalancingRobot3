@@ -5,6 +5,17 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+// ---- Globale Tuning Variable (Definitioner) ----
+// Disse defineres her, og deklareres 'extern' i config.h og tuning_handler.h
+double g_balance_kp = 18.0;
+double g_balance_ki = 0.1;
+double g_balance_kd = 0.2;
+double g_velocity_kp = 0.0;
+double g_init_balance = -2.5000;
+double g_balance_output_to_rpm_scale = 1.0;
+double g_power_gain = 0.0;
+double g_balance_calib_ki = 0.001;
+
 bool g_enable_csv_output = false;
 
 Preferences preferences;
@@ -13,9 +24,11 @@ const char *PREF_NAMESPACE = "balancer";
 const char *KEY_KP = "bal_kp";
 const char *KEY_KI = "bal_ki";
 const char *KEY_KD = "bal_kd";
+const char *KEY_VEL_KP = "vel_kp";
 const char *KEY_INIT_BAL = "init_bal";
 const char *KEY_SCALE = "bal_scale";
 const char *KEY_GAIN = "bal_gain";
+
 
 // --- Buffer til seriel input ---
 #define SERIAL_BUFFER_SIZE 64
@@ -23,7 +36,8 @@ char serialBuffer[SERIAL_BUFFER_SIZE];
 uint8_t bufferIndex = 0;
 bool commandReady = false;
 
-void processBufferedCommand(double currentPitch); // Prototype
+// Prototype for internal use only (can be static)
+static void processBufferedCommand();
 
 void initializeTuningParameters()
 {
@@ -39,6 +53,7 @@ void initializeTuningParameters()
     g_balance_kp = preferences.getDouble(KEY_KP, g_balance_kp);
     g_balance_ki = preferences.getDouble(KEY_KI, g_balance_ki);
     g_balance_kd = preferences.getDouble(KEY_KD, g_balance_kd);
+    g_velocity_kp = preferences.getDouble(KEY_VEL_KP, g_velocity_kp); // <--- LOAD
     g_init_balance = preferences.getDouble(KEY_INIT_BAL, g_init_balance);
     g_balance_output_to_rpm_scale = preferences.getDouble(KEY_SCALE, g_balance_output_to_rpm_scale);
     g_power_gain = preferences.getDouble(KEY_GAIN, g_power_gain);
@@ -61,6 +76,7 @@ void saveTuningParameters()
   preferences.putDouble(KEY_KP, g_balance_kp);
   preferences.putDouble(KEY_KI, g_balance_ki);
   preferences.putDouble(KEY_KD, g_balance_kd);
+  preferences.putDouble(KEY_VEL_KP, g_velocity_kp); // <--- SAVE
   preferences.putDouble(KEY_INIT_BAL, g_init_balance);
   preferences.putDouble(KEY_SCALE, g_balance_output_to_rpm_scale);
   preferences.putDouble(KEY_GAIN, g_power_gain);
@@ -71,14 +87,13 @@ void saveTuningParameters()
 
 void printCurrentTunings()
 {
-  // THIS IS THE FORMAT YOUR PYTHON SCRIPT EXPECTS FOR VERIFICATION
-  // Do NOT add extra newlines or text around this specific print format.
-  Serial.printf("TAG_INFO: KP: %.4f, KI: %.4f, KD: %.4f, Gain: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
-                g_balance_kp, g_balance_ki, g_balance_kd, g_power_gain, g_init_balance, g_balance_output_to_rpm_scale,
+  // Print g_velocity_kp
+  Serial.printf("TAG_INFO: KP: %.4f, KI: %.4f, KD: %.4f, VelKP: %.4f, Gain: %.4f, InitBal: %.4f, Scale: %.4f, CSV: %s\n",
+                g_balance_kp, g_balance_ki, g_balance_kd, g_velocity_kp, g_power_gain, g_init_balance, g_balance_output_to_rpm_scale,
                 g_enable_csv_output ? "ON" : "OFF");
 }
 
-void handleSerialTuning(double currentPitch)
+void handleSerialTuning()
 {
   while (Serial.available() > 0 && !commandReady)
   {
@@ -102,75 +117,61 @@ void handleSerialTuning(double currentPitch)
       {
         Serial.println("Error: Command too long. Buffer flushed.");
         bufferIndex = 0;
-        while (Serial.available() > 0 && Serial.read() != '\n');
+        while (Serial.available() > 0 && Serial.read() != '\n'); // Clear rest of line
       }
     }
   }
 
   if (commandReady)
   {
-    processBufferedCommand(currentPitch);
+    processBufferedCommand();
     commandReady = false;
     bufferIndex = 0;
   }
 }
 
-void processBufferedCommand(double currentPitch)
+static void processBufferedCommand() // Made static
 {
   String input(serialBuffer);
   input.trim();
-
-  // Debug print kan være nyttigt, men kan forstyrre Python parseren.
-  // Hold den kommenteret ud medmindre du specifikt debugger her.
-  // Serial.print("DBG PROC: Processing '"); Serial.print(input); Serial.println("'");
 
   if (input.equalsIgnoreCase("save"))
   {
     saveTuningParameters();
   }
   else if (input.equalsIgnoreCase("load"))
-    // Load from NVS, but do NOT print immediately here.
-    // Python sends 'print' afterwards.
   {
-    Serial.println("TAG_INFO: Loading parameters from NVS..."); // Info message BEFORE loading
-    // preferences.begin / getDouble / preferences.end are called inside initializeTuningParameters()
-    initializeTuningParameters(); // This also prints at the end of its execution
+    Serial.println("TAG_INFO: Loading parameters from NVS...");
+    initializeTuningParameters();
   }
   else if (input.equalsIgnoreCase("print"))
   {
-    // This is the command Python uses to verify parameters.
-    // ONLY call printCurrentTunings() here.
     printCurrentTunings();
   }
   else if (input.equalsIgnoreCase("csv_on"))
   {
     g_enable_csv_output = true;
+    netDisplacement_m = 0.0;
     Serial.println("TAG_INFO: CSV output ENABLED.");
-    // Do NOT print tunings here automatically, Python sends print after.
   }
   else if (input.equalsIgnoreCase("csv_off"))
   {
     g_enable_csv_output = false;
     Serial.println("TAG_INFO: CSV output DISABLED.");
-     // Do NOT print tunings here automatically, Python sends print after.
   }
-   else if (input.equalsIgnoreCase("init_now")) {
-    g_init_balance = currentPitch;
-    Serial.printf("TAG_INFO: Initial balance angle set to current pitch: %.4f\n", g_init_balance);
-    // Do NOT print tunings here automatically, Python sends print after.
-   }
   else if (input.equalsIgnoreCase("help"))
   {
     Serial.println("TAG_INFO: Available commands (case-insensitive for command part):");
     Serial.println("TAG_INFO:   kp=<value>");
     Serial.println("TAG_INFO:   ki=<value>");
     Serial.println("TAG_INFO:   kd=<value>");
+    Serial.println("TAG_INFO:   velkp=<value>"); // <--- HELP MESSAGE
     Serial.println("TAG_INFO:   gain=<value>");
     Serial.println("TAG_INFO:   init=<value>");
-    Serial.println("TAG_INFO:   init_now");
+    // Serial.println("TAG_INFO:   init_now");
     Serial.println("TAG_INFO:   scale=<value>");
     Serial.println("TAG_INFO:   save");
-    Serial.println("TAG_INFO:   load"); // Added load command help
+    Serial.println("TAG_INFO:   load");
     Serial.println("TAG_INFO:   print");
     Serial.println("TAG_INFO:   csv_on");
     Serial.println("TAG_INFO:   csv_off");
@@ -186,7 +187,6 @@ void processBufferedCommand(double currentPitch)
       String valueStr = input.substring(equalsPos + 1);
       double value = valueStr.toDouble();
 
-      // Update the global variable directly
       if (command.equals("kp"))
       {
         g_balance_kp = value;
@@ -198,6 +198,10 @@ void processBufferedCommand(double currentPitch)
       else if (command.equals("kd"))
       {
         g_balance_kd = value;
+      }
+       else if (command.equals("velkp"))
+      {
+        g_velocity_kp = value;
       }
       else if (command.equals("gain"))
       {
@@ -217,8 +221,6 @@ void processBufferedCommand(double currentPitch)
         Serial.print(command);
         Serial.println("'");
       }
-      // Do NOT print status here after each parameter update.
-      // Python expects to control when the robot prints status via the 'print' command.
     }
     else if (input.length() > 0)
     {

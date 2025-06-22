@@ -1,104 +1,50 @@
 /**
  * main.cpp
- * Hovedprogram for Balancerobot med Fused Sensor Data og Manuel PID kontrol.
+ * Hovedprogram for Balancerobot - Main Logic.
  */
 
 #include <Arduino.h>
 #include <cmath>
-#include "config.h"          // Konfigurationskonstanter (inkluderer extern deklarationer for g_)
-#include "ESP32.h"           // Pin definitioner
-#include "Motor.h"           // Grundlæggende Motor klasse
-#include "SpeedController.h" // Hastighedsregulator klasse
-
-// Inkluder standard Adafruit BNO08x header. Dette giver adgang til klassen
-// Adafruit_BNO08x og SH2_* definitionerne.
-#include <Adafruit_BNO08x.h>
-
-// FJERN inklusionen af din egen BNO085 wrapper
-// #include "BNO085.h" // <--- FJERNES
-
-// MotorData.h og tuning_handler.h er stadig nødvendige
-#include "tuning_handler.h" // Håndterer seriel tuning
+#include <Wire.h>
+#include "config.h"            // Konfigurationskonstanter (inkluderer extern deklarationer for g_ og RobotState enum)
+#include "ESP32.h"             // Pin definitioner (Nu uden konflikterende standardnavne)
+#include "Motor.h"             // Grundlæggende Motor klasse
+#include "SpeedController.h"   // Hastighedsregulator klasse
+#include "BalanceController.h" // BalanceController klasse
+#include "IMUManager.h"        // <--- Inkluder den nye IMU Manager klasse
+#include "CSVLogger.h"         // <--- Inkluder den nye CSV Logger klasse
+#include "tuning_handler.h"    // Håndterer seriel tuning og globale tuning variabler
 
 // --- Globale Objekter ---
-// Sørg for MOTOR_MIN_MEASUREMENT_TIME_MS er defineret i config.h
 Motor motor1(MOTOR1_IN1, MOTOR1_IN2, MOTOR1_ENA, MOTOR1_HALL_A, PWM_CHANNEL1, MOTOR_MIN_MEASUREMENT_TIME_MS);
 Motor motor2(MOTOR2_IN3, MOTOR2_IN4, MOTOR2_ENB, MOTOR2_HALL_A, PWM_CHANNEL2, MOTOR_MIN_MEASUREMENT_TIME_MS);
 
 SpeedController speedCtrl1(motor1);
 SpeedController speedCtrl2(motor2);
 
-// Opret BNO085 IMU objektet DIREKTE fra Adafruit klassen
-Adafruit_BNO08x bno085; // <-- RETTET TYPE
+BalanceController balanceController; // BalanceController objekt
+IMUManager imuManager;               // <--- IMU Manager objekt
+CsvLogger csvLogger;                 // <--- CSV Logger objekt
 
-sh2_SensorValue_t sensorValue; // Til at læse BNO085 rapporter
-
-// --- Globale PID Variable og Tilstand ---
-// Disse variables DEFINITIONER er flyttet til tuning_handler.cpp.
-// De er kun deklareret som 'extern' i config.h for at være globale.
-// Deres værdier initialiseres i initializeTuningParameters().
-
-// ---- Globale Tuning Variable (Definitioner) ----
-double g_balance_kp = 12.0;
-double g_balance_ki = 1.0;
-double g_balance_kd = 0.54;
-double g_velocity_kp = 0.01;
-double g_init_balance = 0.8000;
-double g_balance_output_to_rpm_scale = 1.0;
-double g_power_gain = 0.0;
-
-// Variabler til at holde de seneste sensorværdier
-double fusedPitch = 0.0;        // Fused Pitch vinkel fra BNO085 (grader)
-double fusedPitchRate = 0.0;    // Fused Pitch vinkelhastighed fra BNO085 (grader/sek)
-double filteredPitchRate = 0.0; // Fused Pitch vinkelhastighed fra BNO085 (grader/sek)
-
-double pitch_error_integral = 0.0; // Manuel integral akkumulator
-double balanceCmd = 0.0;           // Det samlede PID output før Power Gain/scaling
-
-// Variabler til logning af individuelle PID termer (manuelt beregnet)
-double pTerm_log = 0.0;
-double iTerm_log = 0.0;
-double dTerm_log = 0.0;
-
-// g_enable_csv_output er nu defineret i tuning_handler.cpp og deklareret extern i tuning_handler.h
-// bool g_enable_csv_output = false; // <-- FJERN DENNE DEFINITION HER
+// --- Globale Tuning Variable ---
+// Deres definitioner er i tuning_handler.cpp, deklarationer i config.h
+// g_balance_kp, g_balance_ki, g_balance_kd, g_velocity_kp, g_init_balance, g_balance_output_to_rpm_scale, g_power_gain, g_enable_csv_output
 
 // --- Globale Tilstandsvariabler ---
-enum RobotState
-{
-  IDLE,
-  CALIBRATING_IMU, // Måske ikke nødvendigt med BNO085's auto-kalibrering, men god at have
-  BALANCING,
-  FALLEN
-};
+// RobotState enum er defineret i config.h
 RobotState currentState = IDLE;
 const char *RobotStateString[] = {"IDLE", "CALIBRATING_IMU", "BALANCING", "FALLEN"};
 
+extern double g_balance_calib_ki;
 unsigned long lastLoopTimeMicros = 0;
+double netDisplacement_m = 0.0;
+double nvs_g_init_balance = 0.0;        // Gemmer den oprindelige g_init_balance fra NVS
+unsigned long balancing_start_time = 0; // Timer for hvor længe vi har balanceret
+bool has_saved_this_session = false;
 
 // --- ISR Funktioner ---
 void IRAM_ATTR motor1_isrA() { motor1.incrementPulseCount(); }
 void IRAM_ATTR motor2_isrA() { motor2.incrementPulseCount(); }
-
-// --- Hjælpefunktion til at beregne mål RPM ---
-// balanceInput bruges her til Power Gain scaling - den bør være error signalet
-// balanceCmd er det rå P+I+D output
-void calculateTargetRpms(double pitch_error, double raw_pid_output, double steeringCmd, double &targetRpm1, double &targetRpm2)
-{
-  // Boost multiplier baseret på den absolutte vinkelfejl
-  // Bruger pitch_error (fused pitch - InitBalance) som input til boost
-  double boost_multiplier = 1.0 + abs(pitch_error) * g_power_gain;
-
-  // Skaler RAW PID output med den normale scale OG boost_multiplier
-  double scaled_pid_output = raw_pid_output * g_balance_output_to_rpm_scale * boost_multiplier;
-
-  targetRpm1 = scaled_pid_output - steeringCmd;
-  targetRpm2 = scaled_pid_output + steeringCmd;
-
-  // Sikkerhedskonstrain på output til motorstyringen (typisk PWM eller RPM grænse)
-  targetRpm1 = constrain(targetRpm1, -MAX_RPM, MAX_RPM);
-  targetRpm2 = constrain(targetRpm2, -MAX_RPM, MAX_RPM);
-}
 
 // --- Setup ---
 void setup()
@@ -106,11 +52,12 @@ void setup()
   Serial.begin(115200);
   while (!Serial)
     delay(10);
-  Serial.println("\n\n--- Balancerobot V4 (BNO085 Fused Data & Manual PID) ---");
+  Serial.println("\n\n--- Balancerobot V6 ---");
   Serial.print("Core: ");
   Serial.println(xPortGetCoreID());
 
   initializeTuningParameters(); // Hent/initialiser tuning værdier fra NVS
+  nvs_g_init_balance = g_init_balance;
 
   // Initialiser hardware
   Serial.println("Initialiserer motorer...");
@@ -118,292 +65,245 @@ void setup()
   motor2.begin();
   Serial.println("Motorer OK.");
 
-  Serial.println("Initialiserer BNO085 IMU...");
-  // Kald den korrekte begin metode fra Adafruit klassen (f.eks. begin_I2C)
-  // Standard I2C adresse er 0x4A, men den kan være anderledes på nogle breakouts (0x4B)
-  // Tjek dit breakout board's dokumentation. 0x4A er default i Adafruit bib.
-  if (!bno085.begin_I2C()) // <-- RETTET KALDET
+  // Initialiser IMU Manager - den initialiserer BNO085 internt
+  if (!imuManager.begin())
   {
-    Serial.println("BNO085 ikke fundet eller initialisering fejlede via I2C. Check wiring og adresse (default 0x4A)! Prøv evt 0x4B.");
-    Serial.println("Sørg for at have installeret Adafruit_BNO08x biblioteket.");
+    // imuManager.begin() printer selv fejlmeddelelser
+    Serial.println("Fatal fejl: IMU initialisering fejlede.");
     while (1)
-      delay(100); // Hold programmet hvis IMU ikke virker
+      ; // Stop her hvis IMU ikke virker
   }
-  Serial.println("BNO085 OK.");
-
-  // Aktiver BNO085 rapporter
-  // SH2_GAME_ROTATION_VECTOR er god til spil/robotter da den ignorerer magnetiske forstyrrelser
-  // Sørg for IMU_REPORT_INTERVAL_US er defineret i config.h
-  // Sørg for SH2_GAME_ROTATION_VECTOR er defineret (via Adafruit_BNO08x.h)
-  if (!bno085.enableReport(SH2_GAME_ROTATION_VECTOR, IMU_REPORT_INTERVAL_US))
-  {
-    Serial.println("Fejl ved aktivering af Game Rotation Vector rapport!");
-    // Fortsæt, men uden vinkeldata - ikke godt for balance!
-  }
-  // Aktiver Calibrated Gyro rapport for D-term
-  if (!bno085.enableReport(SH2_CAL_GYRO, IMU_REPORT_INTERVAL_US))
-  {
-    Serial.println("Fejl ved aktivering af Calibrated Gyro rapport!");
-    // Fortsæt, men D-termen baseret på rate vil ikke virke
-  }
-  delay(100); // Giv sensoren tid til at starte rapporter
+  Serial.println("IMU Manager OK.");
 
   Serial.println("Initialiserer Speed Controllers...");
   speedCtrl1.begin();
   speedCtrl2.begin();
   Serial.println("Speed Controllers OK.");
 
-  Serial.println("Manuel Balance PID klar.");
+  // Initialiser Balance Controller
+  balanceController.begin();
+  Serial.println("Balance Controller OK.");
+
+  // Initialiser CSV Logger
+  csvLogger.begin();
+  Serial.println("CSV Logger OK.");
 
   Serial.println("Tilknytter Interrupts...");
   attachInterrupt(digitalPinToInterrupt(MOTOR1_HALL_A), motor1_isrA, RISING);
   attachInterrupt(digitalPinToInterrupt(MOTOR2_HALL_A), motor2_isrA, RISING);
   Serial.println("Interrupts OK.");
 
-  Serial.println("\nSetup færdig. Type 'print' for current tunings or 'kp=value' etc. to set.");
-  Serial.println("Use 'save' to store current tunings to NVS. Use 'init_now' to set initial balance angle.");
   lastLoopTimeMicros = micros();
-  currentState = IDLE; // Start i IDLE indtil klar
 
-  // Vent kort og start BALANCING state for at give tid til seriel monitor etc.
+  // Vent kort og start BALANCING state
   delay(2000);
-  // Sæt CSV header - nu med fused rate
-  // Tjek om CSV output er enabled fra start (via NVS/default)
-  if (g_enable_csv_output)
-  {
-    Serial.println("time_ms,fusedPitch,fusedPitchRate,balanceCmd,pTerm,iTerm,dTerm,scaledOutput");
-  }
 
-  // Sæt den initiale balance vinkel baseret på nuværende pitch FØR vi går i BALANCING state
-  // Læs sensoren en gang for at få en startværdi
-  // Prøv at læse indtil du får en Rotation Vector inden for en timeout
+  // Sæt den initiale balance vinkel baseret på nuværende pitch
+  // Læs IMU en gang for at få en startværdi til init_balance
+  // Dette er en lidt simplere version af setup, da IMUManager håndterer selve læsningen
+  // Vi skal bare kalde update og derefter getPitch.
   unsigned long start_time = millis();
-  bool got_pitch = false;
-  double startupPitch = g_init_balance; // Start med den værdi fra NVS/default
-  while (millis() - start_time < 2000 && !got_pitch)
-  { // Vent max 2 sekunder på første RV
-    while (bno085.getSensorEvent(&sensorValue))
-    {
-      if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR || sensorValue.sensorId == SH2_ROTATION_VECTOR)
-      {
-        // Beregn Pitch vinkel fra Quaternion
-        double qw = sensorValue.un.gameRotationVector.real;
-        double qx = sensorValue.un.gameRotationVector.i;
-        double qy = sensorValue.un.gameRotationVector.j;
-        double qz = sensorValue.un.gameRotationVector.k;
-        double t2 = +2.0 * (qw * qy - qz * qx); // Pitch term
-        t2 = constrain(t2, -1.0, 1.0);          // Sikkerhed
-        double pitchRad = asin(t2);
-        startupPitch = pitchRad * 180.0 / M_PI; // Gem i grader
-        got_pitch = true;
-        break; // Stop reading reports for now
-      }
+  double startupPitch = g_init_balance; // Start med NVS/default
+  bool pitch_available = false;
+
+  // Prøv at læse IMU reports et par gange for at få en første pitch værdi
+  for (int i = 0; i < IMU_STARTUP_READ_ATTEMPTS; ++i)
+  {                                       // Prøv op til 10 gange over 500ms (10*50ms)
+    imuManager.update();                  // Læs reports
+    startupPitch = imuManager.getPitch(); // Hent den seneste pitch
+    if (abs(startupPitch) > 0.001)
+    { // Antag en non-zero pitch betyder vi har data
+      pitch_available = true;
+      break;
     }
-    if (!got_pitch)
-      delay(50); // Vent kort hvis ingen rapport endnu
+    delay(IMU_STARTUP_READ_DELAY_MS);
   }
 
-  if (got_pitch)
+  if (pitch_available)
   {
-    g_init_balance = startupPitch; // Sæt init balance til den fundne pitch
+    g_init_balance = startupPitch;
     Serial.printf("TAG_INFO: Initial balance angle set to current pitch after setup: %.4f\n", g_init_balance);
   }
   else
   {
     Serial.println("ADVARSEL: Kunne ikke få start pitch fra BNO085 indenfor timeout. Bruger NVS/default g_init_balance.");
   }
-  printCurrentTunings(); // Print de endelige tuning værdier
+  printCurrentTunings();
+
+  // Print CSV header - nu via logger objektet
+  csvLogger.printHeader();
 
   currentState = BALANCING; // Nu klar til at starte balancing
+  Serial.println("TAG_STATE: Entering BALANCING state.");
 }
 
 // --- Loop ---
 void loop()
 {
-  // handleSerialTuning modtager nu aktuel pitch som parameter
-  handleSerialTuning(fusedPitch); // <-- RETTET KALDET MED PARAMETER
+  handleSerialTuning();
 
   unsigned long nowMicros = micros();
-  // Beregn tid siden sidste PID/kontrol cyklus
+  unsigned long stability_timer_start = 0;
+  unsigned long prt_timer_start = 0;
   double pid_dt = (double)(nowMicros - lastLoopTimeMicros) / 1000000.0;
   lastLoopTimeMicros = nowMicros;
 
-  // Undgå division med nul eller store udsving hvis loop pauser.
-  // Cap ved en maximal dt (f.eks. 50ms).
-  if (pid_dt <= 0 || pid_dt > 0.05)
-  {
-    if (pid_dt <= 0)
-      pid_dt = 0.001; // Minimum 1ms hvis 0 (f.eks. første loop)
-    if (pid_dt > 0.05)
-      pid_dt = 0.05; // Cap ved 50ms
-                     // Serial.printf("ADVARSEL: Loop dt usædvanlig: %.4f s\n", pid_dt); // Debug
-  }
+  // Cap dt
+  if (pid_dt <= 0)
+    pid_dt = 0.001;
+  if (pid_dt > 0.05)
+    pid_dt = 0.05; // Cap ved 50ms for at undgå store D-term ryk ved pauser
 
-  // --- Læs Sensorer (BNO085) ---
-  // Læs ALLE tilgængelige rapporter i denne cyklus.
-  while (bno085.getSensorEvent(&sensorValue))
-  {
-    switch (sensorValue.sensorId)
-    {
-    case SH2_GAME_ROTATION_VECTOR:
-    case SH2_ROTATION_VECTOR:
-    {
-      // Beregn Pitch vinkel fra Quaternion
-      double qw = sensorValue.un.gameRotationVector.real;
-      double qx = sensorValue.un.gameRotationVector.i;
-      double qy = sensorValue.un.gameRotationVector.j;
-      double qz = sensorValue.un.gameRotationVector.k;
-      // Formel for Pitch (rotation omkring Y) fra Quaternion
-      double t2 = +2.0 * (qw * qy - qz * qx); // Pitch term
-      t2 = constrain(t2, -1.0, 1.0);          // Sikkerhed
-      double pitchRad = asin(t2);
-      fusedPitch = pitchRad * 180.0 / M_PI; // Gem i grader
-      // Serial.printf("RV: %.2f\n", fusedPitch); // Debug print
-      break;
-    }
-    case SH2_CAL_GYRO:
-    {
-      // Læs kalibreret vinkelhastighed (Gyro data)
-      // Pitch rate er typisk rotation omkring Y-aksen (rad/s)
-      fusedPitchRate = sensorValue.un.gyroscope.y * 180.0 / M_PI; // Rad/s
-      LOWPASSFILTER(fusedPitchRate, filteredPitchRate, ALPHA);
-      // Serial.printf("GyroY: %.2f\n", fusedPitchRate); // Debug print
-      break;
-    }
-      // Tilføj andre cases hvis du læser andre rapporter (f.eks. SH2_LINEAR_ACCELERATION for hastighed)
-    }
-  }
+  // --- Læs Sensorer (fra IMU Manager) ---
+  imuManager.update();                                    // <--- Lad IMUManager læse reports
+  double currentPitch = imuManager.getPitch();            // <--- Hent pitch
+  double currentPitchRate = imuManager.getRawPitchRate(); // <--- Hent rå pitch rate
+  // double currentFilteredPitchRate = imuManager.getFilteredPitchRate(); // Den filtrerede rate er tilgængelig, men ikke brugt af PID
+
+  // --- Læs Motor Hastigheder ---
+  double actualRpmLeft = speedCtrl1.getActualRpm();
+  double actualRpmRight = speedCtrl2.getActualRpm();
+  double currentVelocity = (actualRpmLeft + actualRpmRight) / 2.0; // Gennemsnit RPM som hastighed
+
+  // --- BEREGN AKKUMULERET DISTANCE (TILFØJET) ---
+  // Konverter gennemsnitlig RPM til lineær hastighed (m/s)
+  const double avgRps = currentVelocity / 60.0;         // RPM -> Revolutions Per Second
+  const double circumference = M_PI * WHEEL_DIAMETER_M; // Omkreds i meter
+  const double velocity_mps = avgRps * circumference;
+
+  // Akkumuler den absolutte distance kørt i dette tidsinterval (pid_dt)
+  // Vi bruger abs(), så både frem og tilbage bevægelse tæller positivt
+  netDisplacement_m += abs(velocity_mps * pid_dt);
 
   // --- Opdater State Machine ---
-  // Bruger den seneste fusedPitch for state check
-  // Kun tjek hvis vi er i BALANCING for at undgå at trigge FALLEN fra IDLE/CALIBRATING
-  if (currentState == BALANCING)
+  RobotState previousState = currentState;
+  switch (currentState)
   {
-    if (abs(fusedPitch - g_init_balance) > MAX_TILT_ANGLE_SAFETY) // Sørg for MAX_TILT_ANGLE_SAFETY er defineret i config.h
+  case IDLE:
+    // Overgang fra IDLE sker automatisk i setup() nu
+    break;
+  case BALANCING:
+    // Gå til FALLEN hvis hældningen er for stor
+    if (abs(currentPitch - g_init_balance) > MAX_TILT_ANGLE_SAFETY)
     {
       currentState = FALLEN;
-      Serial.printf("TAG_FALLEN: FEJL: For stor hældning (%.2f) -> Går til FALLEN state!\n", fusedPitch);
-      // Stop motorerne med det samme når den falder
-      speedCtrl1.stop();
-      speedCtrl2.stop();
-      // Nulstil integralen ved fald
-      pitch_error_integral = 0.0;
-      balanceCmd = 0.0;
+      Serial.printf("TAG_STATE: For stor hældning (%.2f) -> Går til FALLEN state!\n", currentPitch);
     }
+    break;
+  case FALLEN:
+    // Gå til BALANCING hvis robotten er oprejst igen
+    if (abs(currentPitch - g_init_balance) < RECOVERY_ANGLE_THRESHOLD)
+    {
+      currentState = BALANCING;
+      Serial.println("TAG_STATE: Robot oprejst igen -> Går til BALANCING state.");
+    }
+    break;
+  case CALIBRATING_IMU:
+    // Not implemented yet
+    break;
   }
 
-  // Tjek om robotten er oprejst igen efter et fald
-  if (currentState == FALLEN)
+  // Håndter state transition actions
+  if (currentState != previousState)
   {
-    if (abs(fusedPitch - g_init_balance) < RECOVERY_ANGLE_THRESHOLD) // Sørg for RECOVERY_ANGLE_THRESHOLD er defineret i config.h
+    switch (currentState)
     {
-      Serial.println("TAG_INFO: Robot oprejst igen -> Går til BALANCING state.");
-      currentState = BALANCING;
-      // Nulstil integralen ved genoprettelse for at undgå start-ryk
-      pitch_error_integral = 0.0;
-      balanceCmd = 0.0; // Nulstil kommando
+    case BALANCING:
+      balanceController.resetIntegral();
+      netDisplacement_m = 0.0;
+      break;
+    case FALLEN:
+      speedCtrl1.stop();
+      speedCtrl2.stop();
+      balanceController.resetIntegral(); // Nulstil integral ved fald
+      break;
+    case IDLE:
+      speedCtrl1.stop();
+      speedCtrl2.stop();
+      balanceController.resetIntegral(); // Nulstil integral i IDLE
+      break;
+    default:
+      break;
     }
   }
-  // Tilføj evt. IDLE->BALANCING overgangslogik hvis du har en knap/kommando til at starte
 
   // --- Kontrol Logik ---
   double targetRpm1 = 0.0;
   double targetRpm2 = 0.0;
-  double steeringCommand = 0.0; // Hent fra input (joystick/remote) hvis relevant. For nu 0.0.
+  double steeringCommand = 0.0; // Placeholder for remote control/joystick input
 
-  switch (currentState)
+  // Opdater Balance Controlleren - den beregner nu de ønskede motor RPM
+  balanceController.update(currentPitch, currentPitchRate, currentVelocity, // <--- Brug data fra IMUManager
+                           pid_dt, steeringCommand, currentState,
+                           targetRpm1, targetRpm2); // targetRpm1/2 opdateres via reference
+
+  if (currentState == BALANCING && g_balance_calib_ki != 0)
   {
-  case BALANCING:
-  { // Brug scope for at definere variabler her
-    // Beregn fejlen
-    double pitch_error = fusedPitch - g_init_balance;
-    double actualRpmLeft = speedCtrl1.getActualRpm();
-    double actualRpmRight = speedCtrl2.getActualRpm();
-    double horizontalVelocity = (actualRpmLeft + actualRpmRight) / 2.0; // Gennemsnit RPM
-    double targetVelocity = 0.0;                                        // Hold position
-    double velocityError = targetVelocity - horizontalVelocity;
-    // Velocity P-term
-    double velocityCorrection = velocityError * g_velocity_kp;
+    // Juster g_init_balance gradvist i HVER loop-cyklus.
+    // Dette sikrer en jævn og rolig konvergens mod det rigtige balancepunkt.
+    g_init_balance += balanceController.getIntegral() * g_balance_calib_ki * pid_dt;
+  }
+  if (!has_saved_this_session && currentState == BALANCING)
+  {
 
-    // --- Manuel PID Beregning ---
-    // P Term
-    pTerm_log = g_balance_kp * pitch_error;
-
-    // I Term (akkumuler kun når tæt på balance, med anti-windup)
-    if (abs(pitch_error) < ANTI_WINDUP_ANGLE_THRESHOLD) // Sørg for ANTI_WINDUP_ANGLE_THRESHOLD er defineret i config.h
+    if (millis() - balancing_start_time > MIN_BALANCE_TIME_BEFORE_SAVE_CHECK_MS)
     {
-      pitch_error_integral += pitch_error * pid_dt;
-
-      // Anti-windup constrain integralen
-      if (g_balance_ki != 0)
+      double current_i_term = balanceController.iTerm_log;
+      if (abs(current_i_term) < STABILITY_ITERM_THRESHOLD)
       {
-        double integral_limit = BALANCE_PID_OUTPUT_LIMIT / abs(g_balance_ki); // Sørg for BALANCE_PID_OUTPUT_LIMIT er defineret i config.h
-        pitch_error_integral = constrain(pitch_error_integral, -integral_limit, integral_limit);
+        // Ja, det er stabilt LIGE NU. Start/fortsæt stabilitets-timeren.
+        if (stability_timer_start == 0)
+        {
+          stability_timer_start = millis(); // Start timeren første gang vi ser stabilitet
+        }
+
+        // Tjek 3: Har det været stabilt længe nok?
+        if (millis() - stability_timer_start > STABILITY_MIN_DURATION_MS)
+        {
+          // JA! Systemet er nu officielt stabilt. Tag beslutning om at gemme.
+          has_saved_this_session = true; // "Lås" så vi ikke gemmer igen.
+
+          if (abs(g_init_balance - nvs_g_init_balance) > SAVE_THRESHOLD)
+          {
+            Serial.printf("TAG_INFO: System stable. Auto-saving new g_init_balance: %.4f\n", g_init_balance);
+            saveTuningParameters();
+          }
+          else
+          {
+            Serial.println("TAG_INFO: System stable. Change was small, not saving.");
+          }
+        }
       }
       else
       {
-        pitch_error_integral = 0; // Hvis KI=0, integralen skal være 0
+        // Nej, I-leddet er stort. Systemet er ustabilt. Nulstil stabilitets-timeren.
+        stability_timer_start = 0;
       }
     }
-    // Hvis pitch_error er >= ANTI_WINDUP_ANGLE_THRESHOLD, akkumuleres integralen ikke.
-    // Den beholder sin sidste værdi, hvilket er en form for anti-windup.
-
-    iTerm_log = g_balance_ki * pitch_error_integral;
-
-    // D Term: BRUG DEN FUSEREDE VINKELHASTIGHED DIREKTE FRA BNO085 (Grader/sekund)
-    dTerm_log = g_balance_kd * fusedPitchRate;
-
-    // Samlet RÅ PID output (før scaling og power gain)
-    double balance = pTerm_log + iTerm_log + dTerm_log;
-    double balanceCmd = balance + velocityCorrection;
-
-    // Konstrain det rå PID output
-    balanceCmd = constrain(balanceCmd, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
-
-    // --- Anvend Power Gain og Beregn Motor RPM ---
-    // calculateTargetRpms bruger pitch_error (fused pitch - InitBalance) til boost_multiplier
-    // calculateTargetRpms bruger balanceCmd (det rå PID output efter constrain) til scaling
-    calculateTargetRpms(pitch_error, balanceCmd, steeringCommand, targetRpm1, targetRpm2);
-
-    // --- Send kommandoer til Speed Controllers ---
-    // setTargetRpm håndterer selv konvertering fra RPM til PWM og sender kommandoen.
-    speedCtrl1.setTargetRpm(targetRpm1);
-    speedCtrl2.setTargetRpm(targetRpm2);
-
-    break; // Afslut BALANCING case
+    if (prt_timer_start == 0)
+    {
+      prt_timer_start = millis();
+    }
+    if (prt_timer_start > 0 && millis() - prt_timer_start > 5000)
+    {
+      // Hvis det har været ustabilt i mere end 5 sekunder, så nulstil I-leddet
+      Serial.printf("TAG_WARNING: System unstable. %.4f\n", balanceController.iTerm_log);
+      prt_timer_start = millis(); // Nulstil timeren
+    }
   }
 
-  case IDLE:
-  case FALLEN:
-  default:
-    // Stop motorer i non-balancing states
-    speedCtrl1.stop();
-    speedCtrl2.stop();
-    // Nulstil log-variabler for overskuelighed i plot
-    pTerm_log = 0;
-    iTerm_log = 0;
-    dTerm_log = 0;
-    balanceCmd = 0; // Nulstil også samlet kommando
-    // integralen forbliver som den var, men akkumuleres ikke i IDLE/FALLEN
-    break;
-  }
+  // --- Send kommandoer til Speed Controllers ---
+  speedCtrl1.setTargetRpm(targetRpm1);
+  speedCtrl2.setTargetRpm(targetRpm2);
 
-  // --- Data Logging (til CSV) ---
-  if (g_enable_csv_output)
-  {
-    // CSV format: tid_ms,fusedPitch,fusedPitchRate,balanceCmd,pTerm,iTerm,dTerm,scaledOutput
-    Serial.printf("TAG_CSV: %.4f,", nowMicros / 1000.0); // Tid i ms
-    Serial.printf("%.4f,", fusedPitch);                  // Fused Pitch (Grader)
-    Serial.printf("%.4f,", fusedPitchRate);              // Fused Pitch Rate (Grader/sek)
-    Serial.printf("%.4f,", balanceCmd);                  // Rå PID Output (EFTER constrain)
-    Serial.printf("%.4f,", pTerm_log);                   // P-term bidrag
-    Serial.printf("%.4f,", iTerm_log);                   // I-term bidrag
-    Serial.printf("%.4f,", dTerm_log);                   // D-term bidrag
-    // Log den faktiske scaled output sendt til SpeedControllers' setTargetRpm
-    double pitch_error_for_log = fusedPitch - g_init_balance; // Genberegn pitch_error til log
-    double boost_multiplier_for_log = 1.0 + abs(pitch_error_for_log) * g_power_gain;
-    double scaledOutputToSend_for_log = balanceCmd * g_balance_output_to_rpm_scale * boost_multiplier_for_log;
-    Serial.printf("%.4f\n", scaledOutputToSend_for_log);
-  }
-
-} // End loop()
+  csvLogger.logData(nowMicros,
+                    currentPitch,
+                    currentPitchRate,
+                    balanceController.balanceCmd_log,
+                    balanceController.pTerm_log,
+                    balanceController.iTerm_log,
+                    balanceController.dTerm_log,
+                    balanceController.scaled_output_log,
+                    netDisplacement_m);
+}
+// End loop

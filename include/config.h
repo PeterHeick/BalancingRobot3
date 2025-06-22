@@ -17,6 +17,11 @@
 #define DEADZONE_RPM_THRESHOLD 1
 #define MIN_EFFECTIVE_RPM 10 
 #define MIN_MOTOR_PWM 20
+#define WHEEL_DIAMETER_M 0.13
+#define SAVE_THRESHOLD 0.01 // Grænse for ændring i g_init_balance før gemning
+#define STABILITY_ITERM_THRESHOLD 2
+#define STABILITY_MIN_DURATION_MS 5000 // 5 dekunder
+#define MIN_BALANCE_TIME_BEFORE_SAVE_CHECK_MS 10000 // 10 dekunder
 
 // Minimum tid i ms for at måle motorhastighed (RPM).
 // Hvis der går længere tid uden pulser, antages 0 RPM.
@@ -26,12 +31,16 @@
 #define LOWPASSFILTER(input, output, alpha) ((alpha * input) + ((1.0 - alpha) * output))
 #define ALPHA 0.8
 
+#define IMU_STARTUP_READ_ATTEMPTS 10 // Antal forsøg på at læse IMU ved opstart
+#define IMU_STARTUP_READ_DELAY_MS 50 // Forsinkelse mellem forsøg i ms
+
 // --- PID Konstanter (Manuelt Styret) ---
 // VIGTIGT: Disse er GLOBALE og vil blive overskrevet af NVS ved opstart.
 // De defineres i tuning_handler.cpp
 extern double g_balance_kp;
 extern double g_balance_ki;
 extern double g_balance_kd;
+extern double g_velocity_kp;
 extern double g_init_balance; // Mål-vinkel for balance (typisk tæt på 0, men kan være let off-set)
 extern double g_balance_output_to_rpm_scale; // Skaleringsfaktor fra PID output til RPM kommando
 extern double g_power_gain; // Multiplier for at øge motorkraften ved større hældning
@@ -49,5 +58,13 @@ extern double g_power_gain; // Multiplier for at øge motorkraften ved større h
 
 // Tuning handler: Deklarer g_enable_csv_output som extern, hvis den defineres i .cpp
 extern bool g_enable_csv_output; // <-- SIKRE DEN ER DEFINERET
+
+enum RobotState {
+  IDLE,
+  CALIBRATING_IMU,
+  BALANCING,
+  FALLEN
+};
+
 
 #endif // CONFIG_H
