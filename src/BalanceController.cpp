@@ -13,101 +13,101 @@ extern double g_power_gain;
 extern double g_velocity_kp;
 
 // --- Konstruktør ---
-BalanceController::BalanceController() :
-    _pitch_error_integral(0.0),
-    pTerm_log(0.0),
-    iTerm_log(0.0),
-    dTerm_log(0.0),
-    balanceCmd_log(0.0),
-    scaled_output_log(0.0) // <--- Initialiser ny log variabel
+BalanceController::BalanceController() : _pitch_error_integral(0.0),
+                                         pTerm_log(0.0),
+                                         iTerm_log(0.0),
+                                         dTerm_log(0.0),
+                                         balanceCmd_log(0.0),
+                                         scaled_output_log(0.0) // <--- Initialiser ny log variabel
 {
 }
 
 // --- Initialisering ---
-void BalanceController::begin() {
-    resetIntegral(); // Start med nul integral
-    scaled_output_log = 0.0; // Nulstil også denne
+void BalanceController::begin()
+{
+  resetIntegral();         // Start med nul integral
+  scaled_output_log = 0.0; // Nulstil også denne
 }
 
 // --- Nulstil Integral ---
-void BalanceController::resetIntegral() {
-    _pitch_error_integral = 0.0;
-    iTerm_log = 0.0; // Nulstil også log-variablen
+void BalanceController::resetIntegral()
+{
+  _pitch_error_integral = 0.0;
+  iTerm_log = 0.0; // Nulstil også log-variablen
 }
 
 // --- Hovedkontrolfunktion ---
 void BalanceController::update(double currentPitch, double currentPitchRate, double currentVelocity,
-                            double dt, double steeringCmd, RobotState currentState,
-                            double& targetRpmLeft, double& targetRpmRight)
+                               double dt, double steeringCmd, RobotState currentState,
+                               double &targetRpmLeft, double &targetRpmRight)
 {
-    // Nulstil outputs og log variabler hvis ikke i BALANCING state
-    if (currentState != BALANCING)
+  // Nulstil outputs og log variabler hvis ikke i BALANCING state
+  if (currentState != BALANCING)
+  {
+    targetRpmLeft = 0.0;
+    targetRpmRight = 0.0;
+    pTerm_log = 0.0;
+    // _pitch_error_integral beholder sin værdi, men akkumuleres ikke
+    // iTerm_log opdateres ikke
+    dTerm_log = 0.0;
+    balanceCmd_log = 0.0;
+    scaled_output_log = 0.0; // <--- Nulstil log
+    return;
+  }
+
+  // --- Balance PID Beregning ---
+  double pitch_error = currentPitch - g_init_balance;
+
+  // P Term
+  pTerm_log = g_balance_kp * pitch_error;
+
+  // I Term (akkumuler kun når tæt på balance, med anti-windup)
+  if (abs(pitch_error) < ANTI_WINDUP_ANGLE_THRESHOLD)
+  {
+    _pitch_error_integral += pitch_error * dt;
+
+    // Anti-windup constrain integralen
+    if (g_balance_ki != 0)
     {
-        targetRpmLeft = 0.0;
-        targetRpmRight = 0.0;
-        pTerm_log = 0.0;
-        // _pitch_error_integral beholder sin værdi, men akkumuleres ikke
-        // iTerm_log opdateres ikke
-        dTerm_log = 0.0;
-        balanceCmd_log = 0.0;
-        scaled_output_log = 0.0; // <--- Nulstil log
-        return;
+      double integral_limit = BALANCE_PID_OUTPUT_LIMIT / abs(g_balance_ki);
+      _pitch_error_integral = constrain(_pitch_error_integral, -integral_limit, integral_limit);
     }
-
-    // --- Balance PID Beregning ---
-    double pitch_error = currentPitch - g_init_balance;
-
-    // P Term
-    pTerm_log = g_balance_kp * pitch_error;
-
-    // I Term (akkumuler kun når tæt på balance, med anti-windup)
-    if (abs(pitch_error) < ANTI_WINDUP_ANGLE_THRESHOLD)
+    else
     {
-      _pitch_error_integral += pitch_error * dt;
-
-      // Anti-windup constrain integralen
-      if (g_balance_ki != 0)
-      {
-        double integral_limit = BALANCE_PID_OUTPUT_LIMIT / abs(g_balance_ki);
-        _pitch_error_integral = constrain(_pitch_error_integral, -integral_limit, integral_limit);
-      }
-      else
-      {
-        _pitch_error_integral = 0;
-      }
+      _pitch_error_integral = 0;
     }
-    iTerm_log = g_balance_ki * _pitch_error_integral;
+  }
+  iTerm_log = g_balance_ki * _pitch_error_integral;
 
-    // D Term: BRUG DEN RÅ FUSEREDE VINKELHASTIGHED
-    dTerm_log = g_balance_kd * currentPitchRate;
+  // D Term: BRUG DEN RÅ FUSEREDE VINKELHASTIGHED
+  dTerm_log = g_balance_kd * currentPitchRate;
 
-    // --- Velocity Control (P-term) ---
-    double targetVelocity = 0.0;
-    double velocityError = targetVelocity - currentVelocity;
-    double velocityCorrection = velocityError * g_velocity_kp;
+  // --- Velocity Control (P-term) ---
+  double targetVelocity = 0.0;
+  double velocityError = targetVelocity - currentVelocity;
+  double velocityCorrection = velocityError * g_velocity_kp;
 
+  // --- Samlet RÅ Kontrol Output ---
+  double raw_control_output = pTerm_log + iTerm_log + dTerm_log + velocityCorrection;
 
-    // --- Samlet RÅ Kontrol Output ---
-    double raw_control_output = pTerm_log + iTerm_log + dTerm_log + velocityCorrection;
+  // Konstrain det rå kontrol output
+  raw_control_output = constrain(raw_control_output, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
+  balanceCmd_log = raw_control_output; // Gem den begrænsede rå output til log
 
-    // Konstrain det rå kontrol output
-    raw_control_output = constrain(raw_control_output, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
-    balanceCmd_log = raw_control_output; // Gem den begrænsede rå output til log
+  // --- Anvend Power Gain og Skalering ---
 
-    // --- Anvend Power Gain og Skalering ---
-    double boost_multiplier = 1.0 + abs(pitch_error) * g_power_gain;
+  // --- Anvend Fysik-baseret Power Gain og Skalering ---
+  const double pitch_error_rad = abs(pitch_error) * M_PI / 180.0;
+  double boost_multiplier = 1.0 + sin(pitch_error_rad) * g_power_gain;
 
-    // Skaler det rå kontrol output
-    double scaled_output = raw_control_output * g_balance_output_to_rpm_scale * boost_multiplier;
+  double scaled_output = raw_control_output * g_balance_output_to_rpm_scale * boost_multiplier;
+  scaled_output_log = scaled_output;
 
-    // Gem den skalerede output (uden styring) til logning
-    scaled_output_log = scaled_output; // <--- GEM TIL LOG
+  // --- Beregn Mål RPM for Motorer (inkl. styring) ---
+  targetRpmLeft = scaled_output - steeringCmd;
+  targetRpmRight = scaled_output + steeringCmd;
 
-    // --- Beregn Mål RPM for Motorer (inkl. styring) ---
-    targetRpmLeft = scaled_output - steeringCmd;
-    targetRpmRight = scaled_output + steeringCmd;
-
-    // Sikkerhedskonstrain på de endelige RPM kommandoer
-    targetRpmLeft = constrain(targetRpmLeft, -MAX_RPM, MAX_RPM);
-    targetRpmRight = constrain(targetRpmRight, -MAX_RPM, MAX_RPM);
+  // Sikkerhedskonstrain på de endelige RPM kommandoer
+  targetRpmLeft = constrain(targetRpmLeft, -MAX_RPM, MAX_RPM);
+  targetRpmRight = constrain(targetRpmRight, -MAX_RPM, MAX_RPM);
 }
