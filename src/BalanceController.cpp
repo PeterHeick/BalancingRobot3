@@ -88,20 +88,42 @@ void BalanceController::update(double currentPitch, double currentPitchRate, dou
   double velocityCorrection = velocityError * g_velocity_kp;
 
   // --- Samlet RÅ Kontrol Output ---
-  double raw_control_output = pTerm_log + iTerm_log + dTerm_log + velocityCorrection;
+  // double raw_control_output = pTerm_log + iTerm_log + dTerm_log + velocityCorrection;
 
   // Konstrain det rå kontrol output
-  raw_control_output = constrain(raw_control_output, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
-  balanceCmd_log = raw_control_output; // Gem den begrænsede rå output til log
+  // raw_control_output = constrain(raw_control_output, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
+  // balanceCmd_log = raw_control_output; // Gem den begrænsede rå output til log
 
   // --- Anvend Power Gain og Skalering ---
 
-  // --- Anvend Fysik-baseret Power Gain og Skalering ---
-  const double pitch_error_rad = abs(pitch_error) * M_PI / 180.0;
-  double boost_multiplier = 1.0 + sin(pitch_error_rad) * g_power_gain;
+  //---------------------------------
+  // --- NY KONTROL-STRUKTUR: Adskil Kraft og Dæmpning ---
 
-  double scaled_output = raw_control_output * g_balance_output_to_rpm_scale * boost_multiplier;
-  scaled_output_log = scaled_output;
+// 1. Beregn den primære oprettende kraft fra P og I leddene.
+double PI_output = pTerm_log + iTerm_log;
+
+// 2. Anvend den ikke-lineære boost KUN på opretnings-kraften.
+const double pitch_error_rad = abs(pitch_error) * M_PI / 180.0;
+double boost_multiplier = 1.0 + sin(pitch_error_rad) * g_power_gain;
+double boosted_PI_output = PI_output * boost_multiplier;
+
+// 3. Læg den lineære dæmpning (D-led) og hastighedskorrektion til BAGEFTER.
+double raw_control_output = boosted_PI_output + dTerm_log + velocityCorrection;
+
+// 4. Konstrain og skaler det samlede output. Bemærk: boost_multiplier er allerede anvendt.
+raw_control_output = constrain(raw_control_output, -BALANCE_PID_OUTPUT_LIMIT, BALANCE_PID_OUTPUT_LIMIT);
+balanceCmd_log = raw_control_output; 
+
+double scaled_output = raw_control_output * g_balance_output_to_rpm_scale; // Fjernet boost herfra
+scaled_output_log = scaled_output;
+  //---------------------------------
+
+  // --- Anvend Fysik-baseret Power Gain og Skalering ---
+  // const double pitch_error_rad = abs(pitch_error) * M_PI / 180.0;
+  // double boost_multiplier = 1.0 + sin(pitch_error_rad) * g_power_gain;
+
+  // double scaled_output = raw_control_output * g_balance_output_to_rpm_scale * boost_multiplier;
+  // scaled_output_log = scaled_output;
 
   // --- Beregn Mål RPM for Motorer (inkl. styring) ---
   targetRpmLeft = scaled_output - steeringCmd;

@@ -28,6 +28,7 @@ const char *KEY_VEL_KP = "vel_kp";
 const char *KEY_INIT_BAL = "init_bal";
 const char *KEY_SCALE = "bal_scale";
 const char *KEY_GAIN = "bal_gain";
+const char *KEY_CALIB_KI = "calib_ki";
 
 
 // --- Buffer til seriel input ---

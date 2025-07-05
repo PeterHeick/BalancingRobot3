@@ -12,6 +12,7 @@ extern double g_init_balance;
 extern double g_balance_calib_ki;
 extern double g_balance_output_to_rpm_scale;
 extern double g_power_gain;
+extern double g_balance_calib_ki;
 extern double netDisplacement_m;
 
 // Deklarer den globale variabel til CSV output, defineret i tuning_handler.cpp

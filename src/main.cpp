@@ -42,6 +42,9 @@ double nvs_g_init_balance = 0.0;        // Gemmer den oprindelige g_init_balance
 unsigned long balancing_start_time = 0; // Timer for hvor længe vi har balanceret
 bool has_saved_this_session = false;
 
+// NYE variabler til stabilitets-tjek
+unsigned long stability_timer_start = 0;
+
 // --- ISR Funktioner ---
 void IRAM_ATTR motor1_isrA() { motor1.incrementPulseCount(); }
 void IRAM_ATTR motor2_isrA() { motor2.incrementPulseCount(); }
@@ -173,7 +176,7 @@ void loop()
 
   // Akkumuler den absolutte distance kørt i dette tidsinterval (pid_dt)
   // Vi bruger abs(), så både frem og tilbage bevægelse tæller positivt
-  netDisplacement_m += abs(velocity_mps * pid_dt);
+  netDisplacement_m += velocity_mps * pid_dt;
 
   // --- Opdater State Machine ---
   RobotState previousState = currentState;
@@ -211,6 +214,9 @@ void loop()
     case BALANCING:
       balanceController.resetIntegral();
       netDisplacement_m = 0.0;
+      balancing_start_time = millis();
+      has_saved_this_session = false;
+      stability_timer_start = 0;
       break;
     case FALLEN:
       speedCtrl1.stop();
